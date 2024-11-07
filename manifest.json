@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "Website Time Limiter",
+  "version": "1.0",
+  "description": "Limit time spent on specific websites and show inspiring quotes",
+  "permissions": [
+    "storage",
+    "alarms",
+    "notifications",
+    "tabs",
+    "scripting",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  }
+}
