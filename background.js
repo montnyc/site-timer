@@ -5,7 +5,7 @@ let activeTabInfo = {
 
 // Check for time limits at different intervals
 chrome.alarms.create('checkTimeLimit', { periodInMinutes: 1 });
-chrome.alarms.create('updateSeconds', { periodInMinutes: 1 / 60 }); // Updates every second
+chrome.alarms.create('updateSeconds', { periodInMinutes: 1 / 30 }); // Updates every 2 seconds
 
 // Reset daily limits at midnight
 chrome.alarms.create('resetDaily', {
@@ -62,16 +62,29 @@ function handleTabChange(url, tabId) {
     }
 }
 
+// Cache limits in memory to reduce storage access
+let cachedLimits = {};
+
+// Load limits into cache
+chrome.storage.local.get(['limits'], (result) => {
+    cachedLimits = result.limits || {};
+});
+
+// Update cache when limits change
+chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === 'local' && changes.limits) {
+        cachedLimits = changes.limits.newValue || {};
+    }
+});
+
 async function checkAndBlockIfNeeded(hostname, tabId) {
     try {
-        const { limits } = await chrome.storage.local.get(['limits']);
-        if (limits) {
-            const domainToCheck = hostname.replace(/^www\./, '');
+        const domainToCheck = hostname.replace(/^www\./, '');
+        const limitData = cachedLimits[domainToCheck];
 
-            if (limits[domainToCheck] && limits[domainToCheck].timeSpent >= limits[domainToCheck].limit) {
-                await replacePageContent(tabId);
-                return true;
-            }
+        if (limitData && limitData.timeSpent >= limitData.limit) {
+            await replacePageContent(tabId);
+            return true;
         }
         return false;
     } catch (error) {

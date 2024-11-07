@@ -113,7 +113,6 @@ function getSiteConfig() {
 }
 
 function initializeBanner() {
-    // First check if this site is being tracked
     checkIfSiteIsTracked().then(isTracked => {
         if (isTracked) {
             setupPageForBanner();
@@ -124,41 +123,14 @@ function initializeBanner() {
 function setupPageForBanner() {
     const config = getSiteConfig();
 
-    // Create wrapper and banner
     const wrapper = document.createElement('div');
     wrapper.id = 'mindful-browse-wrapper';
 
     const banner = createTimerBanner();
     wrapper.appendChild(banner);
 
-    // Add to document
     document.body.appendChild(wrapper);
 
-    // Set up scroll handling for auto-hide on Twitter
-    if (config.headerSelector) {
-        let lastScrollY = window.scrollY;
-        let headerVisible = true;
-
-        window.addEventListener('scroll', () => {
-            const currentScroll = window.scrollY;
-            const header = document.querySelector(config.headerSelector);
-
-            if (header) {
-                // Check if header is visible based on its transform
-                const headerTransform = window.getComputedStyle(header).transform;
-                const isHeaderVisible = headerTransform === 'none' || !headerTransform.includes('matrix');
-
-                if (headerVisible !== isHeaderVisible) {
-                    headerVisible = isHeaderVisible;
-                    banner.classList.toggle('hidden', !headerVisible);
-                }
-            }
-
-            lastScrollY = currentScroll;
-        }, { passive: true });
-    }
-
-    // Start updates
     startTimeUpdates();
 }
 
@@ -172,7 +144,6 @@ function createTimerBanner() {
         </div>
     `;
 
-    // Add styles
     const config = getSiteConfig();
     const style = document.createElement('style');
     style.textContent = config.additionalStyles;
@@ -182,9 +153,8 @@ function createTimerBanner() {
 }
 
 function formatTime(minutes) {
-    const totalSeconds = Math.floor(minutes * 60);
-    const mins = Math.floor(totalSeconds / 60);
-    const secs = totalSeconds % 60;
+    const mins = Math.floor(minutes);
+    const secs = Math.floor((minutes - mins) * 60);
     return `${mins}:${secs.toString().padStart(2, '0')}`;
 }
 
@@ -194,11 +164,10 @@ function updateBanner(timeSpent, limit, lastUpdateTime) {
         const timeElement = banner.querySelector('.mindful-browse-time');
         const limitElement = banner.querySelector('.mindful-browse-limit');
 
-        // Calculate current time including seconds
-        const additionalTime = (Date.now() - lastUpdateTime) / 60000;
-        const currentTimeSpent = timeSpent + additionalTime;
+        const currentTimeSpent = timeSpent + (Date.now() - lastUpdateTime) / 60000;
+        const remainingTime = Math.max(0, limit - currentTimeSpent);
 
-        timeElement.textContent = formatTime(currentTimeSpent);
+        timeElement.textContent = formatTime(remainingTime);
         limitElement.textContent = `/ ${limit}m`;
     }
 }
@@ -223,7 +192,7 @@ function startTimeUpdates() {
                 updateBanner(response.timeSpent, response.limit, response.lastUpdateTime);
             }
         });
-    }, 1000);
+    }, 60000); // Update every minute
 }
 
 // Listen for time updates and limit additions
