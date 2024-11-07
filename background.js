@@ -3,8 +3,9 @@ let activeTabInfo = {
     startTime: null
 };
 
-// Check for time limits every minute
+// Check for time limits at different intervals
 chrome.alarms.create('checkTimeLimit', { periodInMinutes: 1 });
+chrome.alarms.create('updateSeconds', { periodInMinutes: 1 / 60 }); // Updates every second
 
 // Reset daily limits at midnight
 chrome.alarms.create('resetDaily', {
@@ -38,29 +39,23 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 });
 
 function handleTabChange(url, tabId) {
-    // Ignore invalid URLs
     if (!url || !url.startsWith('http')) {
         return;
     }
 
     try {
-        // Extract base domain
         let hostname = new URL(url).hostname;
-        // Remove www. prefix if present
         hostname = hostname.replace(/^www\./, '');
 
-        // Update time for previous tab if it exists
         if (activeTabInfo.url && activeTabInfo.startTime) {
             updateTimeSpent(activeTabInfo.url, activeTabInfo.startTime);
         }
 
-        // Store new tab info
         activeTabInfo = {
             url: hostname,
             startTime: Date.now()
         };
 
-        // Check if we should block the page immediately
         checkAndBlockIfNeeded(hostname, tabId);
     } catch (error) {
         console.error('Error handling tab change:', error);
@@ -72,25 +67,28 @@ async function checkAndBlockIfNeeded(hostname, tabId) {
         const { limits } = await chrome.storage.local.get(['limits']);
         if (limits) {
             const domainToCheck = hostname.replace(/^www\./, '');
+
             if (limits[domainToCheck] && limits[domainToCheck].timeSpent >= limits[domainToCheck].limit) {
                 await replacePageContent(tabId);
+                return true;
             }
         }
+        return false;
     } catch (error) {
         console.error('Error checking limits:', error);
+        return false;
     }
 }
 
-// Send time updates to content script
-async function sendTimeUpdateToTab(tabId, timeSpent, limit) {
+async function sendTimeUpdateToTab(tabId, timeSpent, limit, lastUpdateTime) {
     try {
         await chrome.tabs.sendMessage(tabId, {
             type: 'timeUpdate',
             timeSpent,
-            limit
+            limit,
+            lastUpdateTime
         });
     } catch (error) {
-        // Content script might not be loaded yet, which is fine
         console.debug('Could not send time update to tab:', error);
     }
 }
@@ -109,8 +107,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
             if (siteData) {
                 sendResponse({
-                    timeSpent: Math.round(siteData.timeSpent),
-                    limit: siteData.limit
+                    timeSpent: siteData.timeSpent,
+                    limit: siteData.limit,
+                    lastUpdateTime: siteData.lastUpdateTime || Date.now()
                 });
             } else {
                 sendResponse(null);
@@ -122,38 +121,35 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 async function updateTimeSpent(hostname, startTime) {
     try {
-        // Calculate time spent in minutes, with a minimum of 0.1 minutes (6 seconds)
         const timeSpentMs = Date.now() - startTime;
-        const timeSpentMinutes = Math.max(0.1, timeSpentMs / 60000);
+        const timeSpentMinutes = timeSpentMs / 60000; // Keep millisecond precision
 
         const { limits } = await chrome.storage.local.get(['limits']);
         if (limits) {
-            // Check all domains that could match (with or without www.)
             const domainToCheck = hostname.replace(/^www\./, '');
 
             if (limits[domainToCheck]) {
-                // Update time spent
                 limits[domainToCheck].timeSpent += timeSpentMinutes;
-
-                // Use floor instead of round to match popup and banner display
-                limits[domainToCheck].timeSpent = Math.floor(limits[domainToCheck].timeSpent * 10) / 10;
+                limits[domainToCheck].lastUpdateTime = Date.now();
 
                 await chrome.storage.local.set({ limits });
 
-                // Send update to all tabs with this domain
                 const tabs = await chrome.tabs.query({});
                 for (const tab of tabs) {
                     if (tab.url) {
                         const tabHostname = new URL(tab.url).hostname.replace(/^www\./, '');
                         if (tabHostname === domainToCheck) {
-                            await sendTimeUpdateToTab(tab.id, limits[domainToCheck].timeSpent, limits[domainToCheck].limit);
+                            await sendTimeUpdateToTab(
+                                tab.id,
+                                limits[domainToCheck].timeSpent,
+                                limits[domainToCheck].limit,
+                                limits[domainToCheck].lastUpdateTime
+                            );
                         }
                     }
                 }
 
-                // Check if limit exceeded
                 if (limits[domainToCheck].timeSpent >= limits[domainToCheck].limit) {
-                    // Show notification
                     chrome.notifications.create({
                         type: 'basic',
                         iconUrl: 'icon48.png',
@@ -161,7 +157,6 @@ async function updateTimeSpent(hostname, startTime) {
                         message: `You've reached your daily limit for ${domainToCheck}`
                     });
 
-                    // Find and block all matching tabs
                     const tabs = await chrome.tabs.query({});
                     for (const tab of tabs) {
                         if (tab.url) {
@@ -188,45 +183,45 @@ async function replacePageContent(tabId) {
         const randomQuote = allQuotes[Math.floor(Math.random() * allQuotes.length)];
 
         const css = `
-      body {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        min-height: 100vh;
-        margin: 0;
-        background-color: #F5F1EB;
-        font-family: "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-        color: #4A4036;
-        background-image: linear-gradient(120deg, #F5F1EB 0%, #E6DFD7 100%);
-      }
-      .quote-container {
-        text-align: center;
-        max-width: 600px;
-        padding: 48px;
-        background: rgba(255, 255, 255, 0.8);
-        border-radius: 16px;
-        box-shadow: 0 4px 24px rgba(0,0,0,0.05);
-        backdrop-filter: blur(8px);
-      }
-      .quote-text {
-        font-size: 28px;
-        line-height: 1.6;
-        margin-bottom: 24px;
-        color: #2C3338;
-        font-weight: 300;
-      }
-      .quote-author {
-        font-style: italic;
-        color: #8B7355;
-      }
-    `;
+            body {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                min-height: 100vh;
+                margin: 0;
+                background-color: #F5F1EB;
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+                color: #4A4036;
+                background-image: linear-gradient(120deg, #F5F1EB 0%, #E6DFD7 100%);
+            }
+            .quote-container {
+                text-align: center;
+                max-width: 600px;
+                padding: 48px;
+                background: rgba(255, 255, 255, 0.8);
+                border-radius: 16px;
+                box-shadow: 0 4px 24px rgba(0,0,0,0.05);
+                backdrop-filter: blur(8px);
+            }
+            .quote-text {
+                font-size: 28px;
+                line-height: 1.6;
+                margin-bottom: 24px;
+                color: #2C3338;
+                font-weight: 300;
+            }
+            .quote-author {
+                font-style: italic;
+                color: #8B7355;
+            }
+        `;
 
         const html = `
-      <div class="quote-container">
-        <div class="quote-text">"${randomQuote.text}"</div>
-        ${randomQuote.author ? `<div class="quote-author">- ${randomQuote.author}</div>` : ''}
-      </div>
-    `;
+            <div class="quote-container">
+                <div class="quote-text">"${randomQuote.text}"</div>
+                ${randomQuote.author ? `<div class="quote-author">- ${randomQuote.author}</div>` : ''}
+            </div>
+        `;
 
         await chrome.scripting.insertCSS({
             target: { tabId },
@@ -257,7 +252,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
             });
             chrome.storage.local.set({ limits });
         });
-    } else if (alarm.name === 'checkTimeLimit') {
+    } else if (alarm.name === 'checkTimeLimit' || alarm.name === 'updateSeconds') {
         if (activeTabInfo.url && activeTabInfo.startTime) {
             updateTimeSpent(activeTabInfo.url, activeTabInfo.startTime);
             activeTabInfo.startTime = Date.now(); // Reset start time for next check
